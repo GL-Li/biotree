@@ -1,0 +1,6 @@
+nose
+pandas
+numpy
+matplotlib
+scipy
+xlrd
