@@ -7,18 +7,13 @@ import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
 from biotree.utilities import model_1567, linear_fit, add_legend
+from biotree.sensor import Sensor
 plt.style.use("ggplot")
 
 
-class Pressure:
+class Perfusion(Sensor):
     # path to the directory holding the perfusion data.
     path = ""
-
-    def __init__(self, description="perfusion data"):
-        self.description = description
-
-    def __repr__(self):
-        return(self.description)
 
     def __getitem__(self, samples):
         """
@@ -26,50 +21,8 @@ class Pressure:
         """
         return(self.data[samples])
 
-    def read(self, xlsx_file="perfusion_pressure_sensor.xlsx"):
-        """
-        Read perfusion data from a xlsx file.
-        """
-        xlsx_file = self.path + xlsx_file
-        data = pd.read_excel(xlsx_file)
-        data.index = data.time
-        data = data.drop("time", 1)
-        self.data = data
-        self.columns = data.columns
-        self.index = data.index
-
-    def to_pressure(self, base=270):
-        """
-        Convert the raw pressure sensor data into pressure in mmHg.
-
-        Parameters
-        ----------
-        base : base measurement of pressure sensor such as 270.45.
-
-        Return
-        ------
-        A Pressure object.
-        """
-        self.data = (self.data - base) / 30.7 * 43.6
-        return(self)
-
-    def to_force(self, base=270):
-        """
-        Convert raw pressure sensor data into force in N as if the pressure is
-        on a 14.8 mm diameter syringe.
-
-        Parameters
-        ----------
-        base : base measurement of pressure sensor such as 270.45.
-
-        Return
-        ------
-        A Pressure object.
-        """
-        self.data = (self.data - base) / 30.7
-        return(self)
-
-    def plot_sample(self, sample, base=270, with_model=True, x_shift=0,
+    def plot_sample(self, sample, base=270, with_model=True,
+                    x_shift=0, y_shift=0,
                     color="blue", figsize=(8, 5), fit_from=30, fit_to=90):
         """
         Plot a perfusion curve with comparison to model curve and fitting to
@@ -86,6 +39,12 @@ class Pressure:
         fit_from,fit_to : fit range after mercox perfusion started.
         """
 
+        if self.data is None:
+            self.read(sample)
+        else:
+            if sample not in self.data.columns:
+                self.read(sample)
+
         spl = self.data[sample].dropna()
         spl = (spl - base) / 30.7 * 43.6  # to mmHg
         plt.figure(figsize=figsize)
@@ -94,7 +53,7 @@ class Pressure:
         # plot model
         if with_model:
             mdl = model_1567()
-            plt.scatter(mdl.index + x_shift, mdl, c="red", s=0.5)
+            plt.scatter(mdl.index + x_shift, mdl + y_shift, c="red", s=0.5)
 
         # plot fit line to mercox perfusion
         mercox = spl.loc[(x_shift + fit_from + 120):(x_shift + fit_to + 120)]
@@ -150,6 +109,17 @@ class Pressure:
         filename = os.path.join(dirname, 'x_shift.csv')
         sxb = pd.read_csv(filename, index_col="sample")
 
+        for spl in samples:
+            if self.data is None:
+                self.read(spl)
+            else:
+                if spl not in self.data.columns:
+                    self.read(spl)
+            if spl not in sxb.index:
+                sxb.loc[spl, "x_shift"] = 0
+                sxb.loc[spl, "base"] = 270
+                print("Please use plot_sample() to get x_shift for " + spl)
+
         if alphas is None:
             alphas = [1] * len(samples)
 
@@ -158,6 +128,7 @@ class Pressure:
         if x_shifts is None:
             if colors is None:
                 for spl, alpha in zip(samples, alphas):
+                    # 1.42 = 43.7 / 30.7
                     plt.plot(self.index - sxb.loc[spl, "x_shift"],
                              (self.data[spl] - sxb.loc[spl, "base"]) * 1.42,
                              alpha=alpha)
