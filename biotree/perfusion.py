@@ -85,13 +85,16 @@ class Perfusion(Sensor):
 
         spl = self.data[sample].dropna()
         spl = (spl - base) / 30.7 * 43.6  # to mmHg
+        spl = spl.rolling(n_smooth).mean()
         plt.figure(figsize=figsize)
-        plt.plot(spl.index, spl.rolling(n_smooth).mean(), c=color)
+        # convert to np.array which works for all matplotlib version
+        plt.plot(np.asarray(spl.index), np.asarray(spl), c=color)
 
         # plot model
         if with_model:
             mdl = model_1567()
-            plt.scatter(mdl.index + x_shift, mdl + y_shift, c="red", s=0.5)
+            plt.scatter(np.asarray(mdl.index) + x_shift,
+                        np.asarray(mdl) + y_shift, c="red", s=0.5)
 
         # plot fit line to mercox perfusion
         mercox = spl.loc[(x_shift + fit_from + 120):(x_shift + fit_to + 120)]
@@ -176,49 +179,52 @@ class Perfusion(Sensor):
         if alphas is None:
             alphas = [1] * len(samples)
 
+        df = self.data.rolling(n_smooth).mean()
+        x = np.asarray(df.index)
+
         plt.figure(figsize=figsize)
 
         if x_shifts == 1:
             if colors is None:
                 for spl, alpha in zip(samples, alphas):
                     # 1.42 = 43.7 / 30.7
-                    plt.plot(self.index - sxb.loc[spl, "x_shift"],
-                             (self.data[spl].rolling(n_smooth).mean()
+                    plt.plot(x - sxb.loc[spl, "x_shift"],
+                             (np.asarray(df[spl])
                              - sxb.loc[spl, "base"]) * 1.42,
-                             alpha=alpha)
+                             alpha=alpha, label=spl)
             else:
                 for spl, color, alpha in zip(samples, colors, alphas):
-                    plt.plot(self.index - sxb.loc[spl, "x_shift"],
-                             (self.data[spl].rolling(n_smooth)
+                    plt.plot(x - sxb.loc[spl, "x_shift"],
+                             (np.asarray(df[spl])
                               - sxb.loc[spl, "base"]) * 1.42,
-                             c=color, alpha=alpha)
+                             c=color, alpha=alpha, label=spl)
         elif x_shifts == 0:
             if colors is None:
                 for spl, alpha in zip(samples, alphas):
-                    plt.plot(self.index,
-                             (self.data[spl].rolling(n_smooth).mean()
+                    plt.plot(x,
+                             (np.asarray(df[spl])
                               - sxb.loc[spl, "base"]) * 1.42,
-                             alpha=alpha)
+                             alpha=alpha, label=spl)
             else:
                 for spl, color, alpha in zip(samples, colors, alphas):
-                    plt.plot(self.index,
-                             (self.data[spl].rolling(n_smooth).mean()
+                    plt.plot(x,
+                             (np.asarray(df[spl])
                               - sxb.loc[spl, "base"]) * 1.42,
-                             c=color, alpha=alpha)
+                             c=color, alpha=alpha, label=spl)
         else:
             if colors is None:
                 for spl, x_shift, alpha in zip(samples, x_shifts, alphas):
-                    plt.plot(self.index - x_shift,
-                             (self.data[spl].rolling(n_smooth).mean()
+                    plt.plot(x - x_shift,
+                             (np.asarray(df[spl])
                               - sxb.loc[spl, "base"]) * 1.42,
-                             alpha=alpha)
+                             alpha=alpha, label=spl)
             else:
                 for spl, x_shift, color, alpha in zip(samples, x_shifts,
                                                       colors, alphas):
-                    plt.plot(self.index - x_shift,
-                             (self.data[spl].rolling(n_smooth).mean()
+                    plt.plot(x - x_shift,
+                             (np.asarray(df[spl])
                               - sxb.loc[spl, "base"]) * 1.42,
-                             c=color, alpha=alpha)
+                             c=color, alpha=alpha, label=spl)
 
         plt.xlabel("Time (sec)", fontsize=16)
         plt.ylabel("Pressure (mmHg)", fontsize=16)

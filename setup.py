@@ -9,7 +9,7 @@ config = {
     'url': 'URL to get it at.',
     'download_url': 'Where to download it.',
     'author_email': 'My email.',
-    'version': '0.1',
+    'version': '0.2',
     'install_requires': ['nose', 'pandas', 'numpy', 'matplotlib', 'scipy',
                          'xlrd'],
     'packages': ['biotree'],
