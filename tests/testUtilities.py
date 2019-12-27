@@ -20,5 +20,5 @@ def test_linear_fit():
 def test_model_1567():
     model = model_1567()
     assert_equal(model[479.9], 679.6)
-    assert_equal(model[40.0], 41.6)
-    assert_equal(list(model[100.0]), [41.6, -87.0])
+    assert_equal(model[40.0], 41.7)
+    assert_equal(list(model[100.0]), [41.7, -87.0])

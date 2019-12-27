@@ -7,8 +7,10 @@ import glob
 from colorama import Fore
 import pandas as pd
 import numpy as np
+from scipy.optimize import curve_fit
 from matplotlib import pyplot as plt
-from biotree.utilities import model_1567, linear_fit, add_legend
+from biotree.utilities import model_1567, linear_fit
+from biotree.utilities import exponential_func
 from biotree.sensor import Sensor
 plt.style.use("ggplot")
 
@@ -44,7 +46,143 @@ class Perfusion(Sensor):
 
         return(fullname)
 
-    def plot_sample(self, sample, base=270, n_smooth=1, with_model=True,
+    def read_shift_base(self):
+        """
+        Read the file containing x_shift and base of each perfusion.
+
+        Return
+        ------
+        A dataframe having two columns "x_shift" and "base". Its rows are
+        indexed with sample name such "BT2240_AL".
+        """
+        dirname = os.path.dirname(__file__)
+        filename = os.path.join(dirname, 'x_shift.csv')
+        sxb = pd.read_csv(filename, index_col="sample")
+        return sxb
+
+    def get_highflashing(self, sample, smooth=True):
+        """
+        Get perfusion data at high flashing stage
+        """
+        sample = self.get_fullname(sample)
+        self.read(sample)
+        sxb = self.read_shift_base()
+        base = sxb.loc[sample, "base"]
+        dat = self.data[sample].dropna()
+        dat = (dat - base) * 1.42  # to mmHg
+
+        hf_first = dat[dat > 50].index[0]
+        if smooth:
+            dat = dat.rolling(40).mean()
+        hf = dat[hf_first:(hf_first + 250)]
+        hf.index = hf.index - hf_first
+        hf.iloc[-1] = 0
+
+        return hf
+
+    def get_mercox(self, sample, smooth=True):
+        sample = self.get_fullname(sample)
+        self.read(sample)
+        sxb = self.read_shift_base()
+        base = sxb.loc[sample, "base"]
+        x_shift = sxb.loc[sample, "x_shift"]
+        dat = self.data[sample].dropna()
+        dat = (dat - base) * 1.42  # to mmHg
+        if smooth:
+            dat = dat.rolling(150).mean()
+        mercox = dat[x_shift:]
+        mercox.index = mercox.index - x_shift + 1050
+        mercox.iloc[0] = 0
+
+        return mercox
+
+    def get_pfa(self, sample, cut_index=0, smooth=True):
+        """
+        ignore section whose index smaller than cut_index
+        """
+        sample = self.get_fullname(sample)
+        self.read(sample)
+        sxb = self.read_shift_base()
+        base = sxb.loc[sample, "base"]
+        dat = self.data[sample].dropna()
+        dat = (dat - base) * 1.42  # to mmHg
+        dat = dat[cut_index:]
+
+        dat_diff = dat[dat.diff(30).abs() > 20]
+        idx_diff = dat_diff.index.to_series().diff()
+        idx_diff_max = idx_diff.max()
+        idx_diff_max_idx = idx_diff.idxmax()
+
+        pfa_first = idx_diff_max_idx - idx_diff_max
+        if smooth:
+            dat = dat.rolling(150).mean()
+        pfa_dat = dat.loc[pfa_first:(pfa_first + 700)]
+
+        pfa_dat.index = pfa_dat.index - pfa_first + 300
+        pfa_dat.iloc[0] = 0
+        pfa_dat.iloc[-1] = 0
+        return pfa_dat
+
+    def plot_hf_pfa_mercox(self, sample, cut_index=0, smooth=True):
+        hf = self.get_highflashing(sample, smooth)
+        pfa = self.get_pfa(sample, cut_index, smooth)
+        mrx = self.get_mercox(sample, smooth)
+        dat = pd.concat([hf, pfa, mrx])
+        plt.plot(dat.index, dat, label=sample)
+        plt.xlabel("Time (s)")
+        plt.ylabel("Pressure (mmHg)")
+        plt.legend()
+
+    def fit_highflashing(self, sample, t0=0, tn=50, p0=(10, 0.1, 80)):
+        """
+        Fit the exponential decay of the high flashing stage.
+
+        Parameters
+        ----------
+        sample: BT nnumber such as "BT1234".
+        base: base pressure.
+        t0: time where the peak is placed.
+        tn: time in second after peak used for fitting.
+        p0: initial guess of fitting paraters of a, b, c in exponential decay.
+        """
+        sample = self.get_fullname(sample)
+
+        # read sample, x_shift, and base
+        # dirname = os.path.dirname(__file__)
+        # filename = os.path.join(dirname, 'x_shift.csv')
+        # sxb = pd.read_csv(filename, index_col="sample")
+        sxb = self.read_shift_base()
+        base = sxb.loc[sample, "base"]
+
+        self.read(sample)
+        dat = self.data[sample].dropna()
+        dat = (dat - base) * 1.42  # to mmHg
+
+        x0 = np.asarray(dat.index)[0:2500].squeeze()
+        y0 = np.asarray(dat)[0:2500].squeeze()
+
+        # set the peak at 1 second for all perfusion curves
+        n_peak = np.argmax(y0)
+        x0 = x0 - n_peak / 10 + t0
+
+        x = x0[n_peak:(n_peak + 10 * tn)]
+        y = y0[n_peak:(n_peak + 10 * tn)]
+
+        abc, _ = curve_fit(exponential_func, x, y, p0=p0)
+        xx = np.linspace(0, tn, 1000)
+        yy = exponential_func(xx, *abc)
+
+        # force all plot in the same color with c=p1[0].get_color()
+        p1 = plt.plot(x0, y0, linewidth=1, label="_nolegend_", alpha=0.5)
+        plt.plot(xx, yy, c=p1[0].get_color(), linewidth=1,
+                 label="{}: a = {:.1f}, b = {:.3f}, c = {:.1f}".
+                       format(sample, abc[0], abc[1], abc[2]))
+        plt.scatter(x, y, s=10, alpha=0.5)
+        plt.xlabel("Time (s)")
+        plt.ylabel("Pressure (mmHg)")
+        plt.legend()
+
+    def plot_sample(self, sample, base=270, n_smooth=1, with_model="BT1567",
                     x_shift=0, y_shift=0, diff_method="mean",
                     color="blue", figsize=(8, 5), fit_from=30, fit_to=300,
                     xlim=None, ylim=None):
@@ -84,17 +222,20 @@ class Perfusion(Sensor):
                 self.read(sample)
 
         spl = self.data[sample].dropna()
-        spl = (spl - base) / 30.7 * 43.6  # to mmHg
+        spl = (spl - base) * 1.42  # to mmHg
         spl = spl.rolling(n_smooth).mean()
         plt.figure(figsize=figsize)
         # convert to np.array which works for all matplotlib version
         plt.plot(np.asarray(spl.index), np.asarray(spl), c=color)
 
         # plot model
-        if with_model:
+        if with_model == "BT1567":
             mdl = model_1567()
             plt.scatter(np.asarray(mdl.index) + x_shift,
                         np.asarray(mdl) + y_shift, c="red", s=0.5)
+        elif with_model == "BT2239":
+            print("to be completed")
+            pass
 
         # plot fit line to mercox perfusion
         mercox = spl.loc[(x_shift + fit_from + 120):(x_shift + fit_to + 120)]
@@ -135,7 +276,7 @@ class Perfusion(Sensor):
         else:
             plt.xlim(xlim[0], xlim[1])
 
-    def plot_together(self, samples, x_shifts=1, n_smooth=1, colors=None,
+    def plot_together(self, samples, align=None, n_smooth=1, colors=None,
                       alphas=None, figsize=(8, 5)):
         """
         Plot perfusion pressure curves together aligned.
@@ -143,10 +284,10 @@ class Perfusion(Sensor):
         Parameters
         ----------
         samples : list of columns such as ["BT1880_HL", "BT1881_HL"].
-        x_shifts : shifts along x-axis of each curve in samples.
-            If None, curves will be aligned automatically at the beginning
-            of Mercox perfusion. If 0, aligned at time 0. If list, shift each
-            curve according to the elements.
+        align : align curves by shifting along x-axis of each curve in samples.
+            If None, aligned at time 0. If "hf", aligned at peak of high
+            flashing. If "mrx", aligned at the rising of Merocox perfusion.
+            If list, shift each curve according to the elements.
         n_smooth : number of point used to smooth the plot.
         colors : list of colors for each curve. Use default color if None.
         alphas : list of alphas for each curve. Use 1 if None.
@@ -158,9 +299,10 @@ class Perfusion(Sensor):
         samples = [self.get_fullname(sample) for sample in samples]
 
         # read sample, x_shift, and base
-        dirname = os.path.dirname(__file__)
-        filename = os.path.join(dirname, 'x_shift.csv')
-        sxb = pd.read_csv(filename, index_col="sample")
+        # dirname = os.path.dirname(__file__)
+        # filename = os.path.join(dirname, 'x_shift.csv')
+        # sxb = pd.read_csv(filename, index_col="sample")
+        sxb = self.read_shift_base()
 
         if None in samples:
             return(None)
@@ -184,7 +326,20 @@ class Perfusion(Sensor):
 
         plt.figure(figsize=figsize)
 
-        if x_shifts == 1:
+        if align is None:  # start from time zero
+            if colors is None:
+                for spl, alpha in zip(samples, alphas):
+                    plt.plot(x,
+                             (np.asarray(df[spl])
+                              - sxb.loc[spl, "base"]) * 1.42,
+                             alpha=alpha, label=spl)
+            else:
+                for spl, color, alpha in zip(samples, colors, alphas):
+                    plt.plot(x,
+                             (np.asarray(df[spl])
+                              - sxb.loc[spl, "base"]) * 1.42,
+                             c=color, alpha=alpha, label=spl)
+        elif align == "mrx":  # mercox
             if colors is None:
                 for spl, alpha in zip(samples, alphas):
                     # 1.42 = 43.7 / 30.7
@@ -198,28 +353,31 @@ class Perfusion(Sensor):
                              (np.asarray(df[spl])
                               - sxb.loc[spl, "base"]) * 1.42,
                              c=color, alpha=alpha, label=spl)
-        elif x_shifts == 0:
+        elif align == "hf":  # for high flashing
             if colors is None:
                 for spl, alpha in zip(samples, alphas):
-                    plt.plot(x,
+                    x0 = x - np.nanargmax(np.asarray(df[spl])[0:1000]) / 10
+                    print(np.argmax(np.asarray(df[spl])[0:1000]) / 10)
+                    plt.plot(x0,
                              (np.asarray(df[spl])
                               - sxb.loc[spl, "base"]) * 1.42,
                              alpha=alpha, label=spl)
             else:
                 for spl, color, alpha in zip(samples, colors, alphas):
-                    plt.plot(x,
+                    x0 = x - np.nanargmax(np.asarray(df[spl])[0:1000]) / 10
+                    plt.plot(x0,
                              (np.asarray(df[spl])
                               - sxb.loc[spl, "base"]) * 1.42,
                              c=color, alpha=alpha, label=spl)
-        else:
+        elif len(align) > 1:  # for pfa
             if colors is None:
-                for spl, x_shift, alpha in zip(samples, x_shifts, alphas):
+                for spl, x_shift, alpha in zip(samples, align, alphas):
                     plt.plot(x - x_shift,
                              (np.asarray(df[spl])
                               - sxb.loc[spl, "base"]) * 1.42,
                              alpha=alpha, label=spl)
             else:
-                for spl, x_shift, color, alpha in zip(samples, x_shifts,
+                for spl, x_shift, color, alpha in zip(samples, align,
                                                       colors, alphas):
                     plt.plot(x - x_shift,
                              (np.asarray(df[spl])
@@ -229,4 +387,4 @@ class Perfusion(Sensor):
         plt.xlabel("Time (sec)", fontsize=16)
         plt.ylabel("Pressure (mmHg)", fontsize=16)
         plt.ylim(-20, 1100)
-        add_legend(loc="upper left")
+        plt.legend()

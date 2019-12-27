@@ -79,3 +79,7 @@ def add_legend(loc=(1, 0), linewidth=2):
     leg = plt.legend(loc=loc)
     for legobj in leg.legendHandles:
         legobj.set_linewidth(linewidth)
+
+
+def exponential_func(x, a, b, c):
+    return a * np.exp(-b * x) + c

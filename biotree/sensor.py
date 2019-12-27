@@ -51,6 +51,7 @@ class Sensor:
 
         self.data = data_combined
         self.index = data_combined.index
+        return(self)
 
     def trim(self, position="first"):
         # remove data point after first or last maximun
